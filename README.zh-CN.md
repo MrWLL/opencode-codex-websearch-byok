@@ -1,39 +1,55 @@
 # OpenCode 2 的 Codex Web Search BYOK 插件
 
-此插件同名覆盖 OpenCode 2 的 `websearch` 工具，把搜索请求发送到你单独配置的 **Responses 兼容 `/v1/responses` 端点**，并要求远端调用 `web_search`。它适合已有支持该接口的 Codex 搜索网关、希望把搜索配置与 OpenCode 使用的对话模型分开的用户。
+将 OpenCode 2 的 `websearch` 工具接到 Responses 兼容端点。插件通过远端的 `web_search` 工具检索，返回来源链接和搜索摘要。OpenCode 的对话模型可以使用其他服务商。
 
-> 这是社区插件，与 OpenAI、Codex 和 OpenCode 均无官方隶属关系。它调用 Responses `web_search`，**不直接调用 Codex Agent 的 `alpha/search` 或完整 `web.run` 接口**；也不读取 Codex、pi Agent 或 OpenCode 的登录凭据。
+已于 2026-09-28 在 OpenCode `v2.0.10` 上测试。插件通过 `ctx.tool.transform(...editor.add(...))` 注册 `websearch`。升级 OpenCode 后，请检查工具注册、输入参数、执行和权限是否仍正常。
 
-**已验证的宿主版本：OpenCode `v2.0.10`（2026-09-28 核对）。** 本插件使用 v2 默认导出 `id`、`setup(ctx)`，并通过 `ctx.tool.transform(...editor.add(...))` 同名覆盖 `websearch`。以后升级 OpenCode 时，应复查插件发现、覆盖顺序、JSON Schema 参数、Promise 工具执行和 `websearch` 权限；其他 v2 版本尚未验证。
+[English README](./README.md)
 
-英文安装说明见 [README.md](./README.md)。
+## 搜索选项
 
-## 功能
+- 用 `query` 搜索一次，或用 `queries` 提交最多四条查询；同时执行的请求最多三条。
+- 用 `allowedDomains` 或 `blockedDomains` 限定网站。
+- 可设置 `recencyDays`、`maxResults` 和 `searchContextSize`。
+- 每条请求都可设置超时，默认 300 秒。
 
-- 保持模型看到的工具名为 `websearch`，并支持 `query` 或一次提交 1–4 条 `queries`。
-- 每条远端检索请求可单独设置超时，默认 300 秒。
-- 可设置 `allowedDomains`、`blockedDomains`、`recencyDays`、`maxResults`、`searchContextSize`。
-- 输出可核查的来源 URL，并把远端回答标为“需要核对的摘要”。
-- 没有真正发生远端搜索、没有来源 URL 或远端报错时明确失败；不会自动转回 Exa 等服务。
-- 只做搜索，不提供网页抓取、PDF 阅读或学术数据库专用 API。
+`recencyDays` 让远端模型优先查找近期来源。`maxResults` 限制每条查询展示的链接数。
 
-`recencyDays` 是给远端模型的时间偏好，**不保证严格过滤日期**。`maxResults` 限制展示来源的数量，不保证远端返回足量结果。搜索摘要的相关性和准确性仍取决于远端服务及查询措辞。
+## 使用条件
 
-## 安装与配置
+- OpenCode 2
+- 支持 `web_search` 并返回来源 URL 的 Responses 兼容 `/v1/responses` 端点
+- 该端点的 URL、API Key 和模型名称
 
-发布 npm 包后，在 OpenCode 2 的全局 `opencode.json` 的 `plugins` 数组里加入 `opencode-codex-websearch-byok@<VERSION>`。当前也可以把插件目录放入全局 `~/.config/opencode/plugins/` 下进行本地安装。[OpenCode 2 插件目录规则](https://opencode.ai/v2/docs/plugins)
+## 安装
 
-如果以前在本机以 `research-websearch` 目录安装过旧版，改用 npm 包前要先移除或禁用旧目录。两份插件都会注册同名 `websearch`，同时加载时最终覆盖结果取决于加载顺序。
+包发布后，将它加入 OpenCode 的全局配置：
 
-推荐用环境变量提供凭据：
-
-```text
-OC2_CODEX_RESPONSES_URL=https://your-gateway.example/v1/responses
-OC2_CODEX_RESPONSES_MODEL=your-search-model
-OC2_CODEX_RESPONSES_API_KEY=your-secret-key
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-codex-websearch-byok@<VERSION>"]
+}
 ```
 
-这三个变量要在**启动 OpenCode 的进程环境**中设置。URL 必须是完整的 Responses endpoint。不要把真实值写进项目仓库。也可以在 `plugins` 的对象选项中传入 `configFile`，指向机器上单独保存的 JSON：
+本地开发时，可将插件目录放在 `~/.config/opencode/plugins/` 下，或把目录路径加入 `plugins`。参见 [OpenCode 插件加载说明](https://opencode.ai/v2/docs/plugins)。
+
+安装此包前，请移除先前安装的 `research-websearch`；两者都会注册 `websearch`。
+
+通过 `configFile` 指向仓库外的本地 JSON 文件：
+
+```json
+{
+  "plugins": [
+    {
+      "package": "opencode-codex-websearch-byok@<VERSION>",
+      "options": { "configFile": "/path/to/search-config.json" }
+    }
+  ]
+}
+```
+
+本地配置文件内容：
 
 ```json
 {
@@ -44,14 +60,33 @@ OC2_CODEX_RESPONSES_API_KEY=your-secret-key
 }
 ```
 
-`timeoutSeconds` 可省略，默认 300，接受 1–3600 的整数。请把它写在本地独立 JSON 配置文件中；插件条目的 `options` 也支持这个字段，**没有超时时间环境变量**。**每条 query 独立计时**；第四条 query 如在下一批执行，也会得到完整的超时时间，因此整次四条检索可能超过 300 秒。旧版 `timeoutMs` 仍可用，范围为 1–3,600,000 毫秒；同一配置来源同时写两项时优先使用 `timeoutSeconds`。
+`timeoutSeconds` 接受 1–3600 的整数，默认 300。每条查询独立计时，后续批次的查询也从发起请求时开始计时。旧配置项 `timeoutMs` 仍可使用，范围为 1–3,600,000 毫秒；同一文件中同时设置两项时，以 `timeoutSeconds` 为准。
 
-`configFile` 文件不要提交到 Git。插件在全局插件目录中安装时，也兼容读取 OpenCode 全局配置目录下的 `research-websearch.json` 以及旧版 `OC2_RESEARCH_WEBSEARCH_*` 环境变量，以便已有本地安装继续工作。新 `OC2_CODEX_RESPONSES_*` 环境变量优先于自动发现的旧配置文件；显式指定的 `configFile` 优先于环境变量；指定 `apiKeyEnv` 时，该变量优先于上述两者。旧配置里若明确写有 `timeoutMs`，会沿用那个值，可改成 `timeoutSeconds` 来设置新的超时。
+也可以在启动 OpenCode 的进程环境中设置 URL、模型和 Key：
 
-若 OpenCode 配置曾拒绝 `websearch`，需允许该权限。OpenCode 2 格式：
-
-```json
-{ "permissions": [{ "action": "websearch", "resource": "*", "effect": "allow" }] }
+```text
+OC2_CODEX_RESPONSES_URL=https://your-gateway.example/v1/responses
+OC2_CODEX_RESPONSES_MODEL=your-search-model
+OC2_CODEX_RESPONSES_API_KEY=your-secret-key
 ```
 
-重启 OpenCode 后用一个简单查询检查来源 URL。源码目录运行 `npm test` 可检查解析和错误处理。插件已在 OpenCode v2.0.10 本地验证。
+显式指定的 `configFile` 优先于这些环境变量。`apiKeyEnv` 可指定另一个存放 Key 的环境变量。本地安装也兼容旧版 `research-websearch.json` 文件和 `OC2_RESEARCH_WEBSEARCH_*` 环境变量。
+
+如果 OpenCode 配置限制了网页搜索，请允许 `websearch` 权限：
+
+```json
+{
+  "permissions": [
+    { "action": "websearch", "resource": "*", "effect": "allow" }
+  ]
+}
+```
+
+重启 OpenCode 后运行一次搜索，检查结果中是否有来源 URL。
+
+## 开发
+
+```sh
+npm test
+npm pack --dry-run --json
+```
