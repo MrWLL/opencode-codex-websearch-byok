@@ -1,0 +1,30 @@
+{
+  "name": "opencode-codex-websearch-byok",
+  "version": "0.1.0",
+  "description": "OpenCode v2 websearch override backed by a configurable OpenAI Responses web_search endpoint",
+  "type": "module",
+  "main": "./index.js",
+  "exports": "./index.js",
+  "files": [
+    "index.js",
+    "search.js",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-v2",
+    "codex",
+    "websearch",
+    "responses-api"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {}
+}
