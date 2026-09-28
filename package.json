@@ -2,6 +2,19 @@
   "name": "opencode-codex-websearch-byok",
   "version": "0.1.0",
   "description": "OpenCode v2 websearch override backed by a configurable OpenAI Responses web_search endpoint",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrWLL/opencode-codex-websearch-byok.git"
+  },
+  "homepage": "https://github.com/MrWLL/opencode-codex-websearch-byok#readme",
+  "bugs": {
+    "url": "https://github.com/MrWLL/opencode-codex-websearch-byok/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "type": "module",
   "main": "./index.js",
   "exports": "./index.js",
