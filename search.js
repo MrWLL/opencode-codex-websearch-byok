@@ -1,7 +1,8 @@
 const MAX_QUERIES = 4
 const MAX_RESULTS = 20
 const DEFAULT_RESULTS = 8
-const DEFAULT_TIMEOUT_MS = 120_000
+const DEFAULT_TIMEOUT_MS = 300_000
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 export const inputSchema = {
   type: "object",
@@ -34,7 +35,7 @@ function domains(value, name) {
 }
 
 export function normalizeInput(input) {
-  if (!input || typeof input !== "object") throw new Error("websearch input must be an object")
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("websearch input must be an object")
   const hasQuery = input.query !== undefined
   const hasQueries = input.queries !== undefined
   if (hasQuery === hasQueries) throw new Error("Provide exactly one of query or queries")
@@ -47,6 +48,7 @@ export function normalizeInput(input) {
   if (input.recencyDays !== undefined && (!Number.isInteger(input.recencyDays) || input.recencyDays < 1 || input.recencyDays > 3650)) throw new Error("recencyDays must be 1 to 3650")
   const searchContextSize = input.searchContextSize ?? "medium"
   if (!["low", "medium", "high"].includes(searchContextSize)) throw new Error("searchContextSize must be low, medium, or high")
+  if (input.allowedDomains?.length && input.blockedDomains?.length) throw new Error("Use either allowedDomains or blockedDomains, not both")
   return {
     queries: cleanQueries,
     allowedDomains: domains(input.allowedDomains, "allowedDomains"),
@@ -68,8 +70,13 @@ function validSource(url) {
 }
 
 export function parseResponse(payload) {
+  if (payload?.status && payload.status !== "completed") {
+    throw new Error(payload.error?.message ?? payload.incomplete_details?.reason ?? `Remote response ${payload.status}`)
+  }
   const output = Array.isArray(payload?.output) ? payload.output : []
   if (!output.some((item) => item?.type === "web_search_call")) throw new Error("Remote response did not perform web_search")
+  const failedSearch = output.find((item) => item?.type === "web_search_call" && (item.status === "failed" || item.status === "incomplete"))
+  if (failedSearch) throw new Error(`Remote web_search ${failedSearch.status}`)
   const sources = new Map()
   const add = (url, title, snippet) => {
     const href = validSource(url)
@@ -106,14 +113,16 @@ export function parseResponse(payload) {
 }
 
 function decodeResponseText(text, contentType) {
-  if (contentType.includes("text/event-stream") || text.startsWith("data:")) {
+  if (contentType.includes("text/event-stream") || text.startsWith("data:") || text.startsWith("event:")) {
     let completed
     for (const block of text.split(/\r?\n\r?\n/)) {
       const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n")
       if (!data || data === "[DONE]") continue
       let event
-      try { event = JSON.parse(data) } catch { continue }
-      if (event.type === "response.failed") throw new Error(event.response?.error?.message ?? "Remote response failed")
+      try { event = JSON.parse(data) } catch { throw new Error("Remote stream contained invalid JSON") }
+      if (event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error") {
+        throw new Error(event.response?.error?.message ?? event.response?.incomplete_details?.reason ?? event.message ?? `Remote stream ${event.type}`)
+      }
       if (event.type === "response.completed") completed = event.response
     }
     if (!completed) throw new Error("Remote stream ended without response.completed")
@@ -144,33 +153,79 @@ function requestBody(query, input, model) {
 }
 
 async function oneSearch(query, input, config, signal) {
-  const response = await fetch(config.responsesUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-      "OpenAI-Beta": "responses=experimental",
-    },
-    body: JSON.stringify(requestBody(query, input, config.model)),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS)]),
-  })
-  if (!response.ok) throw new Error(`Remote search HTTP ${response.status}`)
-  const text = await response.text()
-  return parseResponse(decodeResponseText(text, response.headers.get("content-type") ?? ""))
+  const timeoutSignal = AbortSignal.timeout(config.timeoutMs)
+  try {
+    const response = await fetch(config.responsesUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "responses=experimental",
+      },
+      body: JSON.stringify(requestBody(query, input, config.model)),
+      signal: AbortSignal.any([signal, timeoutSignal]),
+    })
+    if (!response.ok) throw new Error(`Remote search HTTP ${response.status}`)
+    const text = await readResponseText(response)
+    return parseResponse(decodeResponseText(text, response.headers.get("content-type") ?? ""))
+  } catch (error) {
+    if (timeoutSignal.aborted && !signal.aborted) {
+      const seconds = config.timeoutMs / 1000
+      throw new Error(`Remote search timed out after ${seconds} second${seconds === 1 ? "" : "s"}`, { cause: error })
+    }
+    throw error
+  }
+}
+
+async function readResponseText(response) {
+  if (!response.body) throw new Error("Remote response body was empty")
+  const decoder = new TextDecoder()
+  let text = ""
+  let bytes = 0
+  for await (const chunk of response.body) {
+    bytes += chunk.byteLength
+    if (bytes > MAX_RESPONSE_BYTES) throw new Error("Remote response exceeded 8 MiB")
+    text += decoder.decode(chunk, { stream: true })
+  }
+  return text + decoder.decode()
+}
+
+function getTimeoutMs(config) {
+  if (config.timeoutSeconds !== undefined) {
+    if (!Number.isInteger(config.timeoutSeconds) || config.timeoutSeconds < 1 || config.timeoutSeconds > 3600) {
+      throw new Error("timeoutSeconds must be an integer from 1 to 3600")
+    }
+    return config.timeoutSeconds * 1000
+  }
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3_600_000) {
+    throw new Error("timeoutMs must be an integer from 1 to 3600000")
+  }
+  return timeoutMs
 }
 
 export async function runSearch(rawInput, config, signal = new AbortController().signal) {
   const input = normalizeInput(rawInput)
   const responsesUrl = nonempty(config?.responsesUrl, "responsesUrl")
-  const parsedUrl = new URL(responsesUrl)
+  let parsedUrl
+  try { parsedUrl = new URL(responsesUrl) } catch { throw new Error("responsesUrl must be a valid HTTP or HTTPS URL") }
   if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("responsesUrl must be HTTP or HTTPS")
+  if (parsedUrl.username || parsedUrl.password) throw new Error("responsesUrl must not contain credentials")
   const apiKey = nonempty(config?.apiKey, "apiKey")
   const model = nonempty(config?.model, "model")
-  const safeConfig = { responsesUrl, apiKey, model, timeoutMs: config.timeoutMs }
+  const timeoutMs = getTimeoutMs(config)
+  const safeConfig = { responsesUrl, apiKey, model, timeoutMs }
+  const failed = new AbortController()
+  const combinedSignal = AbortSignal.any([signal, failed.signal])
   const batches = []
-  for (let i = 0; i < input.queries.length; i += 3) {
-    const queries = input.queries.slice(i, i + 3)
-    batches.push(...await Promise.all(queries.map(async (query) => ({ query, result: await oneSearch(query, input, safeConfig, signal) }))))
+  try {
+    for (let i = 0; i < input.queries.length; i += 3) {
+      const queries = input.queries.slice(i, i + 3)
+      batches.push(...await Promise.all(queries.map(async (query) => ({ query, result: await oneSearch(query, input, safeConfig, combinedSignal) }))))
+    }
+  } catch (error) {
+    failed.abort(error)
+    throw error
   }
   const sections = batches.map(({ query, result }) => {
     const sourceLines = result.sources.slice(0, input.maxResults).map((source, index) => `${index + 1}. ${source.title}\n   ${source.url}${source.snippet ? `\n   ${source.snippet.slice(0, 500)}` : ""}`)

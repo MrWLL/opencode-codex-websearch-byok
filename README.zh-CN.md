@@ -11,6 +11,7 @@
 ## 功能
 
 - 保持模型看到的工具名为 `websearch`，并支持 `query` 或一次提交 1–4 条 `queries`。
+- 每条远端检索请求可单独设置超时，默认 300 秒。
 - 可设置 `allowedDomains`、`blockedDomains`、`recencyDays`、`maxResults`、`searchContextSize`。
 - 输出可核查的来源 URL，并把远端回答标为“需要核对的摘要”。
 - 没有真正发生远端搜索、没有来源 URL 或远端报错时明确失败；不会自动转回 Exa 等服务。
@@ -39,11 +40,13 @@ OC2_CODEX_RESPONSES_API_KEY=your-secret-key
   "responsesUrl": "https://your-gateway.example/v1/responses",
   "apiKey": "YOUR_KEY",
   "model": "YOUR_SEARCH_MODEL",
-  "timeoutMs": 120000
+  "timeoutSeconds": 300
 }
 ```
 
-`configFile` 文件不要提交到 Git。插件在全局插件目录中安装时，也兼容读取 OpenCode 全局配置目录下的 `research-websearch.json` 以及旧版 `OC2_RESEARCH_WEBSEARCH_*` 环境变量，以便已有本地安装继续工作。
+`timeoutSeconds` 可省略，默认 300，接受 1–3600 的整数。请把它写在本地独立 JSON 配置文件中；插件条目的 `options` 也支持这个字段，**没有超时时间环境变量**。**每条 query 独立计时**；第四条 query 如在下一批执行，也会得到完整的超时时间，因此整次四条检索可能超过 300 秒。旧版 `timeoutMs` 仍可用，范围为 1–3,600,000 毫秒；同一配置来源同时写两项时优先使用 `timeoutSeconds`。
+
+`configFile` 文件不要提交到 Git。插件在全局插件目录中安装时，也兼容读取 OpenCode 全局配置目录下的 `research-websearch.json` 以及旧版 `OC2_RESEARCH_WEBSEARCH_*` 环境变量，以便已有本地安装继续工作。新 `OC2_CODEX_RESPONSES_*` 环境变量优先于自动发现的旧配置文件；显式指定的 `configFile` 优先于环境变量；指定 `apiKeyEnv` 时，该变量优先于上述两者。旧配置里若明确写有 `timeoutMs`，会沿用那个值，可改成 `timeoutSeconds` 来设置新的超时。
 
 若 OpenCode 配置曾拒绝 `websearch`，需允许该权限。OpenCode 2 格式：
 

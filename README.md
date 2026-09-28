@@ -12,6 +12,7 @@ This is a community plugin, unaffiliated with OpenAI, Codex, or OpenCode. It cal
 
 - Overrides the OpenCode v2 tool named `websearch` rather than adding a competing tool name.
 - Accepts one `query` or 1–4 `queries`, with up to three requests in parallel.
+- Applies a configurable timeout to each remote search request; the default is 300 seconds per query.
 - Supports `allowedDomains`, `blockedDomains`, `recencyDays`, `maxResults`, and `searchContextSize`.
 - Displays source URLs before a clearly labeled remote summary.
 - Reports remote errors, missing search calls, and missing source URLs without provider fallback.
@@ -68,11 +69,13 @@ The config file format is:
   "responsesUrl": "https://your-gateway.example/v1/responses",
   "apiKey": "YOUR_KEY",
   "model": "YOUR_SEARCH_MODEL",
-  "timeoutMs": 120000
+  "timeoutSeconds": 300
 }
 ```
 
-For existing local installs only, the plugin also looks for `research-websearch.json` in OpenCode's global config directory when no `configFile` option is supplied, and accepts the old `OC2_RESEARCH_WEBSEARCH_*` environment variable names. Those compatibility paths do not read pi Agent settings. For an npm installation, use the new environment variables or an explicit `configFile` path.
+`timeoutSeconds` is optional and accepts an integer from 1 to 3600. The default is 300. Set it in the local JSON config file. Plugin `options` also accepts it for installations that use inline settings; there is no timeout environment variable. Each query gets its own timer, including queries started in a later batch; a four-query call can therefore take longer than one timeout period. Existing `timeoutMs` settings remain supported (1–3,600,000 milliseconds). If both are present in the same settings source, `timeoutSeconds` wins.
+
+For existing local installs only, the plugin also looks for `research-websearch.json` in OpenCode's global config directory when no `configFile` option is supplied, and accepts the old `OC2_RESEARCH_WEBSEARCH_*` environment variable names. New `OC2_CODEX_RESPONSES_*` environment variables take precedence over values in that automatically discovered legacy file. An explicit `configFile` takes precedence over environment variables. The `apiKeyEnv` plugin option, if set, takes precedence over both. Those compatibility paths do not read pi Agent settings. For an npm installation, use the new environment variables or an explicit `configFile` path.
 
 If OpenCode denies web search, allow the `websearch` permission action:
 
