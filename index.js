@@ -28,11 +28,14 @@ export default {
       apiKey: options.apiKeyEnv ? process.env[options.apiKeyEnv] : primaryFileConfig.apiKey ?? process.env.OC2_CODEX_RESPONSES_API_KEY ?? legacyFileConfig.apiKey ?? process.env.OC2_RESEARCH_WEBSEARCH_API_KEY,
       timeoutSeconds: timeoutConfig.timeoutSeconds,
       timeoutMs: timeoutConfig.timeoutMs,
+      maxConcurrency: options.maxConcurrency ?? fileConfig.maxConcurrency,
+      maxRetries: options.maxRetries ?? fileConfig.maxRetries,
+      retryDelaySeconds: options.retryDelaySeconds ?? fileConfig.retryDelaySeconds,
     }
     await ctx.tool.transform((editor) => {
       editor.add({
         name: "websearch",
-        description: "Search the live web for research. Use query for one search or queries for 2–4 distinct research angles. Return verifiable source URLs and a clearly marked remote summary. Use allowedDomains or blockedDomains for strict site restrictions. This tool only searches; it does not fetch full pages. Search failures are reported; no fallback provider is used.",
+        description: "Search the live web for research. Use query for one search or queries for 2–4 distinct research angles. Return verifiable source URLs and a clearly marked remote summary. Use allowedDomains or blockedDomains for strict site restrictions. Use webfetch to read full pages. Temporary remote failures are retried internally before returning a final result or error.",
         input: inputSchema,
         options: { permission: "websearch" },
         execute: async (input, context) => ({ content: await runSearch(input, config, context.signal) }),

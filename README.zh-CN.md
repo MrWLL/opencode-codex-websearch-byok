@@ -2,16 +2,17 @@
 
 将 OpenCode 2 的 `websearch` 工具接到 Responses 兼容端点。插件通过远端的 `web_search` 工具检索，返回来源链接和搜索摘要。OpenCode 的对话模型可以使用其他服务商。
 
-已于 2026-09-28 在 OpenCode `v2.0.10` 上测试。插件通过 `ctx.tool.transform(...editor.add(...))` 注册 `websearch`。升级 OpenCode 后，请检查工具注册、输入参数、执行和权限是否仍正常。
+工具注册和执行已于 2026-09-28 在 OpenCode `v2.0.10` 上测试。本地配置和插件启停已于 2026-10-09 在 `v2.0.22` 上核对。插件通过 `ctx.tool.transform(...editor.add(...))` 注册 `websearch`。升级 OpenCode 后，请检查工具注册、输入参数、执行和权限是否仍正常。
 
 [English README](./README.md)
 
 ## 搜索选项
 
-- 用 `query` 搜索一次，或用 `queries` 提交最多四条查询；同时执行的请求最多三条。
+- 用 `query` 搜索一次，或用 `queries` 提交最多四条查询；同一插件实例内的多次工具调用共享并发上限，默认最多两个远端请求。
 - 用 `allowedDomains` 或 `blockedDomains` 限定网站。
 - 可设置 `recencyDays`、`maxResults` 和 `searchContextSize`。
-- 每条请求都可设置超时，默认 300 秒。
+- 每次请求尝试都可设置超时，默认 600 秒。
+- 临时故障在插件内部重试两次，默认分别等待 5 秒、10 秒。重试结束后，Agent 收到成功结果或最终错误。
 
 `recencyDays` 让远端模型优先查找近期来源。`maxResults` 限制每条查询展示的链接数。
 
@@ -56,11 +57,18 @@
   "responsesUrl": "https://your-gateway.example/v1/responses",
   "apiKey": "YOUR_KEY",
   "model": "YOUR_SEARCH_MODEL",
-  "timeoutSeconds": 300
+  "timeoutSeconds": 600,
+  "maxConcurrency": 2,
+  "maxRetries": 2,
+  "retryDelaySeconds": 5
 }
 ```
 
-`timeoutSeconds` 接受 1–3600 的整数，默认 300。每条查询独立计时，后续批次的查询也从发起请求时开始计时。旧配置项 `timeoutMs` 仍可使用，范围为 1–3,600,000 毫秒；同一文件中同时设置两项时，以 `timeoutSeconds` 为准。
+`timeoutSeconds` 接受 1–3600 的整数，默认 600。每次尝试从发起远端请求时独立计时，排队和重试间隔不计入该时间，因此一次工具调用的总耗时可以超过 600 秒。旧配置项 `timeoutMs` 仍可使用，范围为 1–3,600,000 毫秒；同一文件中同时设置两项时，以 `timeoutSeconds` 为准。
+
+`maxConcurrency` 接受 1–8 的整数，默认 2。同一插件实例内的所有调用共享该上限；重试等待时会释放并发名额。
+
+`maxRetries` 接受 0–5 的整数，默认 2，即每条查询最多尝试三次。`retryDelaySeconds` 接受 1–300 的整数，默认 5；每次失败后的等待时间翻倍。HTTP 408、429、500、502、503、504，临时流式错误、网络故障和请求超时会自动重试。HTTP `Retry-After` 响应头可将间隔延长至最多 600 秒。认证错误、输入错误和取消操作立即停止。其他查询重试时，已成功的查询会保留；若仍有查询失败，工具返回最终错误，并附上可取得的远端错误码和消息。
 
 也可以在启动 OpenCode 的进程环境中设置 URL、模型和 Key：
 
